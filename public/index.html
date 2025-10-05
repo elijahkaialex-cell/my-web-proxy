@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Proxy DuckDuckGo Search</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; padding: 24px; background:#fafafa; }
+    .search { max-width:720px; margin: 30px auto; background:white; padding:20px; border-radius:8px; box-shadow: 0 6px 18px rgba(0,0,0,0.06); }
+    input[type="text"] { width:70%; padding:10px 12px; font-size:16px; border:1px solid #ddd; border-radius:6px; }
+    button { padding:10px 14px; font-size:16px; border-radius:6px; border:0; background:#2563eb; color:white; cursor:pointer; }
+    footer { text-align:center; margin-top:18px; color:#666; font-size:14px; }
+  </style>
+</head>
+<body>
+  <div class="search">
+    <h2>Search (proxied)</h2>
+    <form action="/search" method="GET" style="display:flex; gap:8px;">
+      <input type="text" name="q" placeholder="Search DuckDuckGo..." autofocus />
+      <button type="submit">Search</button>
+    </form>
+    <footer>
+      This site proxies DuckDuckGo searches and routes clicked links/resources through the proxy.
+    </footer>
+  </div>
+</body>
+</html>
