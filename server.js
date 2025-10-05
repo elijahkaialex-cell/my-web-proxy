@@ -1,9 +1,10 @@
 // server.js
-import express from "express";
+const express = require("express");
 const fetch = require("node-fetch");
-import cheerio from "cheerio";
-import morgan from "morgan";
-import { URL } from "url";
+const cheerio = require("cheerio");
+const morgan = require("morgan");
+const { URL } = require("url");
+
 
 const app = express();
 const PORT = process.env.PORT || 10000; // Render forwards to the port you bind to
