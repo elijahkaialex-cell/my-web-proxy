@@ -1,6 +1,6 @@
 // server.js
 import express from "express";
-import fetch from "node-fetch";
+const fetch = require("node-fetch");
 import cheerio from "cheerio";
 import morgan from "morgan";
 import { URL } from "url";
