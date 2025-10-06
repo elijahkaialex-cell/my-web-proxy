@@ -1,6 +1,6 @@
 // server.js (CommonJS / Render-ready)
 const express = require('express');
-const fetch = require('node-fetch'); // node-fetch v2 (CommonJS)
+const fetch = require('node-fetch'); // CommonJS
 const cheerio = require('cheerio');
 const morgan = require('morgan');
 const { URL } = require('url');
