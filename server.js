@@ -1,4 +1,4 @@
-// server.js (CommonJS) - uses native http/https for requests (no node-fetch)
+// server.js - native http/https fetch, CommonJS, Render-ready
 const express = require('express');
 const cheerio = require('cheerio');
 const morgan = require('morgan');
@@ -14,8 +14,6 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(express.static('public', { index: false }));
 
-/* --------- Utilities --------- */
-
 function resolveUrl(base, href) {
   try {
     return new URL(href, base).toString();
@@ -27,7 +25,6 @@ function resolveUrl(base, href) {
 function isBlockedUrl(url) {
   if (!url) return true;
   const lower = url.toLowerCase();
-  // block local / metadata addresses
   if (
     lower.startsWith('http://127.') ||
     lower.startsWith('http://localhost') ||
@@ -42,9 +39,8 @@ function isBlockedUrl(url) {
 }
 
 /**
- * Perform an HTTP(S) request and follow redirects (up to maxRedirects).
- * options: { method, headers, body, timeoutMs }
- * Returns: { statusCode, headers, bodyBuffer }
+ * nativeFetch: uses http/https and follows redirects (maxRedirects)
+ * returns { statusCode, headers, body } where body is a Buffer
  */
 function nativeFetch(urlString, options = {}, maxRedirects = 5) {
   return new Promise((resolve, reject) => {
@@ -68,19 +64,16 @@ function nativeFetch(urlString, options = {}, maxRedirects = 5) {
       headers: Object.assign({}, options.headers || {})
     };
 
-    // prevent persistent connections by default
     reqOptions.headers['connection'] = 'close';
 
     const req = lib.request(reqOptions, (res) => {
       const statusCode = res.statusCode || 0;
       const headers = res.headers || {};
 
-      // follow redirects (301/302/303/307/308)
+      // follow redirects
       if (statusCode >= 300 && statusCode < 400 && headers.location) {
         const nextUrl = resolveUrl(urlString, headers.location);
-        // For 303, change method to GET
         const nextMethod = (statusCode === 303) ? 'GET' : reqOptions.method;
-        // close current response and follow
         res.resume();
         return resolve(nativeFetch(nextUrl, { method: nextMethod, headers: options.headers }, maxRedirects - 1));
       }
@@ -101,12 +94,10 @@ function nativeFetch(urlString, options = {}, maxRedirects = 5) {
       });
     }
 
-    if (options.body && (reqOptions.method !== 'GET' && reqOptions.method !== 'HEAD')) {
-      // if body is a Buffer or string
+    if (options.body && reqOptions.method !== 'GET' && reqOptions.method !== 'HEAD') {
       if (Buffer.isBuffer(options.body) || typeof options.body === 'string') {
         req.write(options.body);
       } else if (typeof options.body === 'object') {
-        // send as urlencoded
         const payload = new URLSearchParams(options.body).toString();
         req.write(payload);
       }
@@ -116,8 +107,7 @@ function nativeFetch(urlString, options = {}, maxRedirects = 5) {
   });
 }
 
-/* --------- Proxying logic --------- */
-
+/* proxyFetch - used for GET proxying of resources */
 async function proxyFetch(rawUrl, req, res) {
   if (!rawUrl) {
     res.status(400).send('Missing url');
@@ -129,16 +119,13 @@ async function proxyFetch(rawUrl, req, res) {
   }
 
   try {
-    // forward limited headers
     const headers = {};
     if (req.headers['user-agent']) headers['user-agent'] = req.headers['user-agent'];
     if (req.headers['accept']) headers['accept'] = req.headers['accept'];
-    // Make request
+
     const resp = await nativeFetch(rawUrl, { method: 'GET', headers: headers, timeoutMs: 20000 }, 5);
 
-    // copy content-type
     if (resp.headers['content-type']) res.set('Content-Type', resp.headers['content-type']);
-    // copy some caching headers
     const allowed = ['cache-control', 'content-length', 'content-type', 'last-modified', 'etag'];
     for (const k of Object.keys(resp.headers || {})) {
       if (allowed.includes(k)) res.set(k, resp.headers[k]);
@@ -151,8 +138,7 @@ async function proxyFetch(rawUrl, req, res) {
   }
 }
 
-/* --------- Routes --------- */
-
+/* Routes */
 app.get('/', (req, res) => {
   res.sendFile('index.html', { root: 'public' });
 });
@@ -170,6 +156,7 @@ app.get('/search', async (req, res) => {
     const $ = cheerio.load(text);
     const baseUrl = ddgUrl;
 
+    // anchors
     $('a').each((i, el) => {
       const href = $(el).attr('href');
       if (!href) return;
@@ -180,6 +167,7 @@ app.get('/search', async (req, res) => {
       $(el).attr('target', '_self');
     });
 
+    // images
     $('img').each((i, el) => {
       const src = $(el).attr('src');
       if (!src) return;
@@ -188,6 +176,7 @@ app.get('/search', async (req, res) => {
       $(el).attr('src', `/fetch?url=${encodeURIComponent(resolved)}`);
     });
 
+    // stylesheets
     $("link[rel='stylesheet']").each((i, el) => {
       const href = $(el).attr('href');
       if (!href) return;
@@ -196,6 +185,7 @@ app.get('/search', async (req, res) => {
       $(el).attr('href', `/fetch?url=${encodeURIComponent(resolved)}`);
     });
 
+    // scripts
     $('script').each((i, el) => {
       const src = $(el).attr('src');
       if (!src) return;
@@ -204,6 +194,7 @@ app.get('/search', async (req, res) => {
       $(el).attr('src', `/fetch?url=${encodeURIComponent(resolved)}`);
     });
 
+    // forms
     $('form').each((i, el) => {
       const action = $(el).attr('action') || '';
       const method = ($(el).attr('method') || 'GET').toUpperCase();
@@ -224,9 +215,6 @@ app.get('/search', async (req, res) => {
   }
 });
 
-/**
- * Generic fetch route: GET and POST
- */
 app.all('/fetch', async (req, res) => {
   const raw = req.query.url;
   if (!raw) return res.status(400).send('Missing url');
@@ -264,11 +252,10 @@ app.all('/fetch', async (req, res) => {
     return;
   }
 
-  // fallback to GET behavior
   await proxyFetch(raw, req, res);
 });
 
-/* --------- Start server --------- */
+/* Start */
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Proxy app listening on port ${PORT}`);
 });
