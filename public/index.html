@@ -1,29 +1,162 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>Proxy DuckDuckGo Search</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="description" content="Privacy-focused DuckDuckGo search proxy" />
   <style>
-    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; padding: 24px; background:#fafafa; }
-    .search { max-width:720px; margin: 30px auto; background:white; padding:20px; border-radius:8px; box-shadow: 0 6px 18px rgba(0,0,0,0.06); }
-    input[type="text"] { width:70%; padding:10px 12px; font-size:16px; border:1px solid #ddd; border-radius:6px; }
-    button { padding:10px 14px; font-size:16px; border-radius:6px; border:0; background:#2563eb; color:white; cursor:pointer; }
-    footer { text-align:center; margin-top:18px; color:#666; font-size:14px; }
-    a.small { color:#2563eb; text-decoration:none; font-size:13px; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { 
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; 
+      padding: 24px; 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .container {
+      width: 100%;
+      max-width: 720px;
+    }
+    .search { 
+      background: white; 
+      padding: 32px; 
+      border-radius: 12px; 
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    h2 {
+      color: #1a202c;
+      margin-bottom: 8px;
+      font-size: 28px;
+    }
+    .subtitle {
+      color: #718096;
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+    form { 
+      display: flex; 
+      gap: 8px; 
+      margin-bottom: 20px;
+    }
+    input[type="text"] { 
+      flex: 1;
+      padding: 12px 16px; 
+      font-size: 16px; 
+      border: 2px solid #e2e8f0; 
+      border-radius: 8px;
+      transition: all 0.2s;
+    }
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+    button { 
+      padding: 12px 24px; 
+      font-size: 16px; 
+      font-weight: 600;
+      border-radius: 8px; 
+      border: 0; 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white; 
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+    button:active {
+      transform: translateY(0);
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+    footer { 
+      text-align: center; 
+      padding-top: 20px;
+      border-top: 1px solid #e2e8f0;
+      color: #718096; 
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin-top: 20px;
+    }
+    .feature {
+      background: #f7fafc;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #4a5568;
+    }
+    .feature-icon {
+      font-size: 18px;
+      margin-right: 8px;
+    }
+    @media (max-width: 640px) {
+      .search { padding: 24px 20px; }
+      form { flex-direction: column; }
+      button { width: 100%; }
+    }
   </style>
 </head>
 <body>
-  <div class="search">
-    <h2>Search (proxied)</h2>
-    <form action="/search" method="GET" style="display:flex; gap:8px;">
-      <input type="text" name="q" placeholder="Search DuckDuckGo..." autofocus />
-      <button type="submit">Search</button>
-    </form>
-    <footer>
-      Proxied DuckDuckGo searches — clicked links, images, and styles are routed through the proxy.
-      <div style="margin-top:6px;"><a class="small" href="#" onclick="alert('Tip: use this proxy responsibly.')">Usage tip</a></div>
-    </footer>
+  <div class="container">
+    <div class="search">
+      <h2>🦆 Duck Proxy</h2>
+      <p class="subtitle">Privacy-focused DuckDuckGo search proxy</p>
+      
+      <form action="/search" method="GET" id="searchForm">
+        <input 
+          type="text" 
+          name="q" 
+          placeholder="Search DuckDuckGo..." 
+          autofocus 
+          required
+          aria-label="Search query"
+        />
+        <button type="submit" id="searchBtn">Search</button>
+      </form>
+
+      <div class="features">
+        <div class="feature">
+          <span class="feature-icon">🔒</span>
+          <strong>Private</strong> - All searches proxied
+        </div>
+        <div class="feature">
+          <span class="feature-icon">⚡</span>
+          <strong>Fast</strong> - Optimized routing
+        </div>
+        <div class="feature">
+          <span class="feature-icon">🛡️</span>
+          <strong>Secure</strong> - SSRF protection
+        </div>
+      </div>
+
+      <footer>
+        Proxied DuckDuckGo searches<br>
+        Links, images, and styles are routed through the proxy for privacy
+      </footer>
+    </div>
   </div>
+
+  <script>
+    const form = document.getElementById('searchForm');
+    const btn = document.getElementById('searchBtn');
+    
+    form.addEventListener('submit', function() {
+      btn.disabled = true;
+      btn.textContent = 'Searching...';
+    });
+  </script>
 </body>
 </html>
