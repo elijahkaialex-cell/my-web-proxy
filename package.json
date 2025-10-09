@@ -1,13 +1,13 @@
 {
   "name": "duck-proxy",
   "version": "1.0.0",
-  "description": "DuckDuckGo search proxy - proxies searches and rewrites links/resources.",
+  "description": "DuckDuckGo search proxy",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "engines": {
-    "node": "16.x"
+    "node": "18.x"
   },
   "dependencies": {
     "express": "^4.18.2",
