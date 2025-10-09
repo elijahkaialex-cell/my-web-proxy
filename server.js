@@ -257,14 +257,25 @@ app.all('/search', async (req, res) => {
     const $ = cheerio.load(text);
     const baseUrl = ddgUrl;
 
-    // Rewrite anchors
+    // Rewrite anchors - proxy ALL external links
     $('a').each((i, el) => {
       const href = $(el).attr('href');
       if (!href) return;
+      
+      // Skip javascript and mailto links
+      if (href.startsWith('javascript:') || href.startsWith('mailto:')) return;
+      
       const resolved = resolveUrl(baseUrl, href);
       if (!resolved) return;
-      if (resolved.startsWith('javascript:') || resolved.startsWith('mailto:')) return;
-      $(el).attr('href', `/fetch?url=${encodeURIComponent(resolved)}`);
+      
+      // Check if it's an internal link (stays on our proxy)
+      if (resolved.includes('/search') || resolved.includes('/fetch')) {
+        // Already proxied, keep as-is
+        return;
+      }
+      
+      // Proxy all external links through /proxy route for full page rendering
+      $(el).attr('href', `/proxy?url=${encodeURIComponent(resolved)}`);
       $(el).attr('target', '_self');
     });
 
@@ -312,15 +323,118 @@ app.all('/search', async (req, res) => {
       }
     });
 
-    // Add proxy banner
+    // Add proxy banner (don't show the search query in the banner for privacy)
     $('body').prepend(`<div style="background:#f7f7f7;border-bottom:1px solid #ddd;padding:6px;font-size:14px;">
-      Proxy: showing results for <strong>${cheerio.load('<div></div>').text(q)}</strong> — <a href="/">New search</a>
+      Proxy: showing search results — <a href="/">New search</a>
     </div>`);
 
     res.send($.html());
   } catch (err) {
     console.error('Error fetching DDG:', err.message);
     res.status(500).send('Error fetching search results');
+  }
+});
+
+// Proxy full page route - fetches and rewrites HTML pages
+app.get('/proxy', async (req, res) => {
+  const targetUrl = req.query.url;
+  if (!targetUrl) return res.status(400).send('Missing url');
+  if (isBlockedUrl(targetUrl)) return res.status(400).send('Blocked URL');
+
+  try {
+    const headers = {
+      'user-agent': req.headers['user-agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    };
+
+    const fetched = await nativeFetch(targetUrl, { 
+      method: 'GET', 
+      headers: headers,
+      timeoutMs: TIMEOUT_MS
+    }, MAX_REDIRECTS);
+
+    const contentType = fetched.headers['content-type'] || '';
+
+    // If it's HTML, rewrite it
+    if (contentType.includes('text/html')) {
+      const text = fetched.body.toString('utf8');
+      const $ = cheerio.load(text);
+      const baseUrl = targetUrl;
+
+      // Rewrite all anchors to go through proxy
+      $('a').each((i, el) => {
+        const href = $(el).attr('href');
+        if (!href) return;
+        if (href.startsWith('javascript:') || href.startsWith('mailto:') || href.startsWith('#')) return;
+        
+        const resolved = resolveUrl(baseUrl, href);
+        if (!resolved) return;
+        
+        $(el).attr('href', `/proxy?url=${encodeURIComponent(resolved)}`);
+      });
+
+      // Rewrite images
+      $('img').each((i, el) => {
+        const src = $(el).attr('src');
+        if (!src) return;
+        const resolved = resolveUrl(baseUrl, src);
+        if (!resolved) return;
+        $(el).attr('src', `/fetch?url=${encodeURIComponent(resolved)}`);
+      });
+
+      // Rewrite stylesheets
+      $("link[rel='stylesheet']").each((i, el) => {
+        const href = $(el).attr('href');
+        if (!href) return;
+        const resolved = resolveUrl(baseUrl, href);
+        if (!resolved) return;
+        $(el).attr('href', `/fetch?url=${encodeURIComponent(resolved)}`);
+      });
+
+      // Rewrite scripts
+      $('script').each((i, el) => {
+        const src = $(el).attr('src');
+        if (!src) return;
+        const resolved = resolveUrl(baseUrl, src);
+        if (!resolved) return;
+        $(el).attr('src', `/fetch?url=${encodeURIComponent(resolved)}`);
+      });
+
+      // Rewrite forms
+      $('form').each((i, el) => {
+        const action = $(el).attr('action');
+        if (!action) return;
+        const resolved = resolveUrl(baseUrl, action);
+        if (!resolved) return;
+        $(el).attr('action', `/proxy?url=${encodeURIComponent(resolved)}`);
+      });
+
+      // Add navigation banner
+      const urlObj = new URL(targetUrl);
+      $('body').prepend(`<div style="background:#667eea;color:white;padding:8px 12px;font-size:13px;position:sticky;top:0;z-index:9999;box-shadow:0 2px 4px rgba(0,0,0,0.1);">
+        🦆 <strong>Duck Proxy</strong> | Viewing: <span style="opacity:0.9">${urlObj.hostname}</span> | 
+        <a href="/" style="color:white;margin-left:8px;">New Search</a> | 
+        <a href="javascript:history.back()" style="color:white;margin-left:8px;">← Back</a>
+      </div>`);
+
+      res.send($.html());
+    } else {
+      // Not HTML, just proxy it directly
+      if (fetched.headers['content-type']) res.set('Content-Type', fetched.headers['content-type']);
+      const allowed = ['cache-control', 'content-length', 'content-type', 'last-modified', 'etag'];
+      for (const k of Object.keys(fetched.headers || {})) {
+        if (allowed.includes(k)) res.set(k, fetched.headers[k]);
+      }
+      res.status(fetched.statusCode || 200).send(fetched.body);
+    }
+  } catch (err) {
+    console.error('Proxy error:', err.message);
+    res.status(500).send(`
+      <div style="font-family:system-ui;padding:40px;text-align:center;">
+        <h2 style="color:#e53e3e;">Error Loading Page</h2>
+        <p style="color:#718096;margin-top:12px;">Could not load the requested page.</p>
+        <a href="/" style="display:inline-block;margin-top:20px;padding:10px 20px;background:#667eea;color:white;text-decoration:none;border-radius:6px;">Return to Search</a>
+      </div>
+    `);
   }
 });
 
