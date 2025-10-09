@@ -226,13 +226,21 @@ app.get('/', (req, res) => {
 
 // Search route - handle both GET and POST for captcha forms
 app.all('/search', async (req, res) => {
-  // Get query from either GET or POST
-  const q = req.query.q || req.body.q;
+  // Get query from either GET, POST form data, or JSON
+  let q, allParams;
+  
+  if (req.is('application/json')) {
+    q = req.body.q;
+    allParams = req.body;
+  } else {
+    q = req.query.q || req.body.q;
+    allParams = { ...req.query, ...req.body };
+  }
+  
   if (!q) return res.redirect('/');
 
   // Build DDG URL with all query params
   const params = new URLSearchParams();
-  const allParams = { ...req.query, ...req.body };
   for (const [key, value] of Object.entries(allParams)) {
     params.append(key, value);
   }
@@ -241,15 +249,16 @@ app.all('/search', async (req, res) => {
 
   try {
     const fetchOptions = {
-      method: req.method,
-      headers: { 'user-agent': req.headers['user-agent'] || 'node-proxy' },
+      method: 'POST',
+      headers: { 
+        'user-agent': req.headers['user-agent'] || 'node-proxy',
+        'content-type': 'application/x-www-form-urlencoded'
+      },
       timeoutMs: TIMEOUT_MS
     };
 
-    // If POST, include the body
-    if (req.method === 'POST') {
-      fetchOptions.body = req.body;
-    }
+    // Convert params to form body for DDG
+    fetchOptions.body = params;
 
     const fetched = await nativeFetch(ddgUrl, fetchOptions, MAX_REDIRECTS);
     
