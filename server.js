@@ -1,4 +1,4 @@
-// server.js - native http/https fetch, CommonJS, Render-ready
+// server.js - Fixed version with security improvements and bug fixes
 const express = require('express');
 const cheerio = require('cheerio');
 const morgan = require('morgan');
@@ -8,12 +8,40 @@ const https = require('https');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
+const TIMEOUT_MS = parseInt(process.env.TIMEOUT_MS) || 15000;
+const MAX_REDIRECTS = 5;
 
+// Middleware
 app.use(morgan('tiny'));
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '10mb' }));
 app.use(express.static('public', { index: false }));
 
+// Security headers middleware
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  next();
+});
+
+// Global error handlers
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
+/**
+ * Resolves a relative URL against a base URL
+ * @param {string} base - Base URL
+ * @param {string} href - URL to resolve
+ * @returns {string|null} Resolved URL or null if invalid
+ */
 function resolveUrl(base, href) {
   try {
     return new URL(href, base).toString();
@@ -22,29 +50,72 @@ function resolveUrl(base, href) {
   }
 }
 
+/**
+ * Enhanced SSRF protection - blocks private IPs and localhost
+ * @param {string} url - URL to check
+ * @returns {boolean} True if URL should be blocked
+ */
 function isBlockedUrl(url) {
   if (!url) return true;
-  const lower = url.toLowerCase();
-  if (
-    lower.startsWith('http://127.') ||
-    lower.startsWith('http://localhost') ||
-    lower.startsWith('http://0.0.0.0') ||
-    lower.includes('169.254.169.254') ||
-    lower.startsWith('http://169.254.') ||
-    lower.startsWith('http://[::1]')
-  ) {
+  
+  let urlObj;
+  try {
+    urlObj = new URL(url);
+  } catch {
     return true;
   }
+
+  // Block non-HTTP protocols
+  if (!['http:', 'https:'].includes(urlObj.protocol)) {
+    return true;
+  }
+
+  const hostname = urlObj.hostname.toLowerCase();
+  
+  // Block private IP ranges
+  const privatePatterns = [
+    /^127\./,           // Loopback
+    /^10\./,            // Private Class A
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./, // Private Class B
+    /^192\.168\./,     // Private Class C
+    /^169\.254\./,     // Link-local
+    /^::1$/,            // IPv6 loopback
+    /^fc00:/,           // IPv6 private
+    /^fe80:/            // IPv6 link-local
+  ];
+
+  // Block localhost variants and cloud metadata endpoints
+  const blockedHosts = [
+    'localhost',
+    '0.0.0.0',
+    'metadata.google.internal',
+    '169.254.169.254'
+  ];
+
+  if (blockedHosts.includes(hostname)) {
+    return true;
+  }
+
+  for (const pattern of privatePatterns) {
+    if (pattern.test(hostname)) {
+      return true;
+    }
+  }
+
   return false;
 }
 
 /**
- * nativeFetch: uses http/https and follows redirects (maxRedirects)
- * returns { statusCode, headers, body } where body is a Buffer
+ * Native HTTP/HTTPS fetch with redirect following
+ * @param {string} urlString - URL to fetch
+ * @param {Object} options - Request options (method, headers, body, timeoutMs)
+ * @param {number} maxRedirects - Maximum number of redirects to follow
+ * @returns {Promise<{statusCode: number, headers: Object, body: Buffer}>}
  */
-function nativeFetch(urlString, options = {}, maxRedirects = 5) {
+function nativeFetch(urlString, options = {}, maxRedirects = MAX_REDIRECTS) {
   return new Promise((resolve, reject) => {
     if (maxRedirects < 0) return reject(new Error('Too many redirects'));
+    
     let urlObj;
     try {
       urlObj = new URL(urlString);
@@ -70,7 +141,7 @@ function nativeFetch(urlString, options = {}, maxRedirects = 5) {
       const statusCode = res.statusCode || 0;
       const headers = res.headers || {};
 
-      // follow redirects
+      // Follow redirects
       if (statusCode >= 300 && statusCode < 400 && headers.location) {
         const nextUrl = resolveUrl(urlString, headers.location);
         const nextMethod = (statusCode === 303) ? 'GET' : reqOptions.method;
@@ -87,9 +158,10 @@ function nativeFetch(urlString, options = {}, maxRedirects = 5) {
     });
 
     req.on('error', (err) => reject(err));
+    
     if (options.timeoutMs) {
       req.setTimeout(options.timeoutMs, () => {
-        req.abort();
+        req.destroy(); // Fixed: use destroy() instead of abort()
         reject(new Error('Request timed out'));
       });
     }
@@ -107,7 +179,9 @@ function nativeFetch(urlString, options = {}, maxRedirects = 5) {
   });
 }
 
-/* proxyFetch - used for GET proxying of resources */
+/**
+ * Proxy GET requests for resources
+ */
 async function proxyFetch(rawUrl, req, res) {
   if (!rawUrl) {
     res.status(400).send('Missing url');
@@ -123,7 +197,7 @@ async function proxyFetch(rawUrl, req, res) {
     if (req.headers['user-agent']) headers['user-agent'] = req.headers['user-agent'];
     if (req.headers['accept']) headers['accept'] = req.headers['accept'];
 
-    const resp = await nativeFetch(rawUrl, { method: 'GET', headers: headers, timeoutMs: 20000 }, 5);
+    const resp = await nativeFetch(rawUrl, { method: 'GET', headers: headers, timeoutMs: TIMEOUT_MS }, MAX_REDIRECTS);
 
     if (resp.headers['content-type']) res.set('Content-Type', resp.headers['content-type']);
     const allowed = ['cache-control', 'content-length', 'content-type', 'last-modified', 'etag'];
@@ -133,16 +207,24 @@ async function proxyFetch(rawUrl, req, res) {
 
     res.status(resp.statusCode || 200).send(resp.body);
   } catch (err) {
-    console.error('proxyFetch error', err && err.stack ? err.stack : err);
+    console.error('proxyFetch error:', err.message);
     res.status(500).send('Error fetching remote resource');
   }
 }
 
 /* Routes */
+
+// Health check endpoint for monitoring
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Homepage
 app.get('/', (req, res) => {
   res.sendFile('index.html', { root: 'public' });
 });
 
+// Search route
 app.get('/search', async (req, res) => {
   const q = req.query.q;
   if (!q) return res.redirect('/');
@@ -150,13 +232,17 @@ app.get('/search', async (req, res) => {
   const ddgUrl = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(q)}`;
 
   try {
-    const fetched = await nativeFetch(ddgUrl, { method: 'GET', headers: { 'user-agent': req.headers['user-agent'] || 'node-proxy' } }, 5);
+    const fetched = await nativeFetch(ddgUrl, { 
+      method: 'GET', 
+      headers: { 'user-agent': req.headers['user-agent'] || 'node-proxy' },
+      timeoutMs: TIMEOUT_MS
+    }, MAX_REDIRECTS);
+    
     const text = fetched.body.toString('utf8');
-
     const $ = cheerio.load(text);
     const baseUrl = ddgUrl;
 
-    // anchors
+    // Rewrite anchors
     $('a').each((i, el) => {
       const href = $(el).attr('href');
       if (!href) return;
@@ -167,7 +253,7 @@ app.get('/search', async (req, res) => {
       $(el).attr('target', '_self');
     });
 
-    // images
+    // Rewrite images
     $('img').each((i, el) => {
       const src = $(el).attr('src');
       if (!src) return;
@@ -176,7 +262,7 @@ app.get('/search', async (req, res) => {
       $(el).attr('src', `/fetch?url=${encodeURIComponent(resolved)}`);
     });
 
-    // stylesheets
+    // Rewrite stylesheets
     $("link[rel='stylesheet']").each((i, el) => {
       const href = $(el).attr('href');
       if (!href) return;
@@ -185,7 +271,7 @@ app.get('/search', async (req, res) => {
       $(el).attr('href', `/fetch?url=${encodeURIComponent(resolved)}`);
     });
 
-    // scripts
+    // Rewrite scripts
     $('script').each((i, el) => {
       const src = $(el).attr('src');
       if (!src) return;
@@ -194,7 +280,7 @@ app.get('/search', async (req, res) => {
       $(el).attr('src', `/fetch?url=${encodeURIComponent(resolved)}`);
     });
 
-    // forms
+    // Rewrite forms
     $('form').each((i, el) => {
       const action = $(el).attr('action') || '';
       const method = ($(el).attr('method') || 'GET').toUpperCase();
@@ -204,17 +290,19 @@ app.get('/search', async (req, res) => {
       $(el).attr('method', method);
     });
 
+    // Add proxy banner
     $('body').prepend(`<div style="background:#f7f7f7;border-bottom:1px solid #ddd;padding:6px;font-size:14px;">
-      Proxy: showing results for <strong>${q}</strong> — <a href="/">New search</a>
+      Proxy: showing results for <strong>${cheerio.load('<div></div>').text(q)}</strong> — <a href="/">New search</a>
     </div>`);
 
     res.send($.html());
   } catch (err) {
-    console.error('Error fetching DDG:', err && err.stack ? err.stack : err);
+    console.error('Error fetching DDG:', err.message);
     res.status(500).send('Error fetching search results');
   }
 });
 
+// Fetch proxy route
 app.all('/fetch', async (req, res) => {
   const raw = req.query.url;
   if (!raw) return res.status(400).send('Missing url');
@@ -242,20 +330,27 @@ app.all('/fetch', async (req, res) => {
         body = params.toString();
       }
 
-      const rr = await nativeFetch(raw, { method: 'POST', headers, body, timeoutMs: 20000 }, 5);
+      const rr = await nativeFetch(raw, { method: 'POST', headers, body, timeoutMs: TIMEOUT_MS }, MAX_REDIRECTS);
       if (rr.headers['content-type']) res.set('Content-Type', rr.headers['content-type']);
       res.status(rr.statusCode || 200).send(rr.body);
     } catch (err) {
-      console.error('POST proxy error', err && err.stack ? err.stack : err);
+      console.error('POST proxy error:', err.message);
       res.status(500).send('Error proxying POST');
     }
     return;
   }
 
+  // Fallback for other methods
   await proxyFetch(raw, req, res);
 });
 
-/* Start */
+// 404 handler
+app.use((req, res) => {
+  res.status(404).send('Not found');
+});
+
+/* Start server */
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Proxy app listening on port ${PORT}`);
+  console.log(`Node version: ${process.version}`);
 });
