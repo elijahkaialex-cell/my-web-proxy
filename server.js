@@ -224,19 +224,34 @@ app.get('/', (req, res) => {
   res.sendFile('index.html', { root: 'public' });
 });
 
-// Search route
-app.get('/search', async (req, res) => {
-  const q = req.query.q;
+// Search route - handle both GET and POST for captcha forms
+app.all('/search', async (req, res) => {
+  // Get query from either GET or POST
+  const q = req.query.q || req.body.q;
   if (!q) return res.redirect('/');
 
-  const ddgUrl = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(q)}`;
+  // Build DDG URL with all query params
+  const params = new URLSearchParams();
+  const allParams = { ...req.query, ...req.body };
+  for (const [key, value] of Object.entries(allParams)) {
+    params.append(key, value);
+  }
+
+  const ddgUrl = `https://lite.duckduckgo.com/lite/?${params.toString()}`;
 
   try {
-    const fetched = await nativeFetch(ddgUrl, { 
-      method: 'GET', 
+    const fetchOptions = {
+      method: req.method,
       headers: { 'user-agent': req.headers['user-agent'] || 'node-proxy' },
       timeoutMs: TIMEOUT_MS
-    }, MAX_REDIRECTS);
+    };
+
+    // If POST, include the body
+    if (req.method === 'POST') {
+      fetchOptions.body = req.body;
+    }
+
+    const fetched = await nativeFetch(ddgUrl, fetchOptions, MAX_REDIRECTS);
     
     const text = fetched.body.toString('utf8');
     const $ = cheerio.load(text);
@@ -280,14 +295,21 @@ app.get('/search', async (req, res) => {
       $(el).attr('src', `/fetch?url=${encodeURIComponent(resolved)}`);
     });
 
-    // Rewrite forms
+    // Rewrite forms - keep them pointing through /search for proper handling
     $('form').each((i, el) => {
       const action = $(el).attr('action') || '';
       const method = ($(el).attr('method') || 'GET').toUpperCase();
-      const resolved = action ? resolveUrl(baseUrl, action) : baseUrl;
-      if (!resolved) return;
-      $(el).attr('action', `/fetch?url=${encodeURIComponent(resolved)}`);
-      $(el).attr('method', method);
+      
+      // If it's a search form going to DDG, redirect to our /search endpoint
+      if (action.includes('duckduckgo.com') || action.includes('/lite/')) {
+        $(el).attr('action', '/search');
+        $(el).attr('method', 'GET');
+      } else if (action) {
+        const resolved = resolveUrl(baseUrl, action);
+        if (!resolved) return;
+        $(el).attr('action', `/fetch?url=${encodeURIComponent(resolved)}`);
+        $(el).attr('method', method);
+      }
     });
 
     // Add proxy banner
