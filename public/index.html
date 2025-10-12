@@ -152,10 +152,41 @@
   <script>
     const form = document.getElementById('searchForm');
     const btn = document.getElementById('searchBtn');
+    const input = form.querySelector('input[name="q"]');
     
-    form.addEventListener('submit', function() {
+    form.addEventListener('submit', async function(e) {
+      e.preventDefault();
+      
+      const query = input.value.trim();
+      if (!query) return;
+      
       btn.disabled = true;
       btn.textContent = 'Searching...';
+      
+      try {
+        const response = await fetch('/search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ q: query })
+        });
+        
+        const html = await response.text();
+        
+        // Replace current page without adding to history
+        document.open();
+        document.write(html);
+        document.close();
+        
+        // Replace history entry to hide search
+        history.replaceState({}, '', '/');
+        
+      } catch (error) {
+        alert('Search failed. Please try again.');
+        btn.disabled = false;
+        btn.textContent = 'Search';
+      }
     });
   </script>
 </body>
